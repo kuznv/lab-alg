@@ -1,0 +1,71 @@
+package lab4
+
+import kotlinx.coroutines.experimental.channels.Channel
+import kotlinx.coroutines.experimental.channels.consumeEach
+import kotlinx.coroutines.experimental.delay
+import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.experimental.runBlocking
+import util.randomGraph
+import util.toString2
+import java.util.*
+import java.util.concurrent.TimeUnit
+
+fun main(args: Array<String>): Unit = runBlocking {
+        val graph = randomGraph(4, 5, 1..9, Random(0))
+/*
+    val graph = List(10) {
+        mapOf((it + 1).coerceAtMost(9) to 10)
+    }
+*/
+    println(graph.toString2())
+
+    val vertices = List(graph.size, ::Vertex)
+    for ((i, v) in vertices.withIndex()) {
+        v.edges = graph[i].mapKeys { (v2) -> vertices[v2] }
+    }
+
+    val edges = vertices.flatMap { v1 ->
+        v1.edges.map { (v2, throughput) -> Edge(v1, v2, throughput) }
+    }
+
+    val source = launch {
+        while (isActive) vertices.first().channel.send(-1)
+    }
+
+    val sink = Edge(
+            source = vertices.last(),
+            destination = Vertex(-1).apply { launch { channel.consumeEach { } } },
+            maxThroughputPerSecond = Int.MAX_VALUE
+    )
+
+    repeat(4) {
+        delay(2000, TimeUnit.MILLISECONDS)
+        println("Avg = ${sink.actualThroughputPerSecond}")
+    }
+}
+
+private class Vertex(val number: Int) {
+    lateinit var edges: Map<Vertex, Int>
+    val channel = Channel<Int>()
+}
+
+private class Edge(source: Vertex, destination: Vertex, val maxThroughputPerSecond: Int) {
+    val start = System.currentTimeMillis()
+    var sent = 0; private set
+
+    val job = launch {
+        val periodMillis = 1000L / maxThroughputPerSecond
+        for (item in source.channel) {
+            destination.channel.send(item)
+            ++sent
+            println("${source.number} -> ${destination.number}")
+            delay(periodMillis, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    val actualThroughputPerSecond: Double
+        get() {
+            val duration = System.currentTimeMillis() - start
+            return sent * 1000.0 / duration
+        }
+}
